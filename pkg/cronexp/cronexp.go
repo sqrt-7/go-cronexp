@@ -2,10 +2,10 @@ package cronexp
 
 import (
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 )
+
+const AllValues = "*"
 
 /*
 	https://en.wikipedia.org/wiki/Cron#CRON_expression
@@ -69,8 +69,7 @@ func New(rawInput string) (*CronExp, error) {
 	return c, nil
 }
 
-// String implements standard Stringer interface
-func (x CronExp) String() string {
+func (x CronExp) Expand() string {
 	output := fmt.Sprintf(`
 minute        %v
 hour          %v
@@ -95,35 +94,65 @@ func (x *CronExp) Parse(rawInput string) error {
 	}
 
 	// Minutes
-	minutes, err := x.parseNumber(split[0], "minutes", MinuteRange[0], MinuteRange[1], nil)
+	minutes, err := FieldParser{
+		input:            split[0],
+		fieldName:        "minutes",
+		minRange:         MinuteRange[0],
+		maxRange:         MinuteRange[1],
+		optReplaceValues: nil,
+	}.GenerateValues()
 	if err != nil {
 		return err
 	}
 	x.minutes = minutes
 
 	// Hours
-	hours, err := x.parseNumber(split[1], "hours", HourRange[0], HourRange[1], nil)
+	hours, err := FieldParser{
+		input:            split[1],
+		fieldName:        "hours",
+		minRange:         HourRange[0],
+		maxRange:         HourRange[1],
+		optReplaceValues: nil,
+	}.GenerateValues()
 	if err != nil {
 		return err
 	}
 	x.hours = hours
 
 	// Days of month
-	dom, err := x.parseNumber(split[2], "days of month", DomRange[0], DomRange[1], nil)
+	dom, err := FieldParser{
+		input:            split[2],
+		fieldName:        "days of month",
+		minRange:         DomRange[0],
+		maxRange:         DomRange[1],
+		optReplaceValues: nil,
+	}.GenerateValues()
 	if err != nil {
 		return err
 	}
 	x.daysOfMonth = dom
 
 	// Months
-	months, err := x.parseNumber(split[3], "months", MonthRange[0], MonthRange[1], MonthNames)
+	months, err := FieldParser{
+		input:            split[3],
+		fieldName:        "months",
+		minRange:         MonthRange[0],
+		maxRange:         MonthRange[1],
+		optReplaceValues: MonthNames,
+	}.GenerateValues()
 	if err != nil {
 		return err
 	}
 	x.months = months
 
 	// Days of week
-	dow, err := x.parseNumber(split[4], "days of week", DowRange[0], DowRange[1], WeekNames)
+	dow, err := FieldParser{
+		input:            split[4],
+		fieldName:        "days of week",
+		minRange:         DowRange[0],
+		maxRange:         DowRange[1],
+		optReplaceValues: WeekNames,
+	}.GenerateValues()
 	if err != nil {
 		return err
 	}
@@ -133,121 +162,4 @@ func (x *CronExp) Parse(rawInput string) error {
 	x.command = split[5]
 
 	return nil
-}
-
-// parseNumber parses and validates the cron input for the given range
-func (x CronExp) parseNumber(raw, fieldName string, min, max int, replaceValues map[string]int) ([]int, error) {
-	// ALL
-	if raw == "*" {
-		return fill(min, max), nil
-	}
-
-	rawReplaced := raw
-	if replaceValues != nil {
-		for k, v := range replaceValues {
-			rawReplaced = strings.ReplaceAll(rawReplaced, k, fmt.Sprint(v))
-		}
-	}
-
-	// SIMPLE NUMBER (x)
-	if simple, err := strconv.Atoi(rawReplaced); err == nil {
-		if simple < min || simple > max {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] (min: %d max: %d)", fieldName, rawReplaced, min, max)
-		}
-
-		return []int{simple}, nil
-	}
-
-	// FREQUENCY (*/x) -- ignores replacements
-	if sp := strings.Split(raw, "*/"); len(sp) == 2 {
-		frequency, err := strconv.Atoi(sp[1])
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] invalid number", fieldName, raw)
-		}
-
-		if frequency < 1 {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] frequency can not be less than 1", fieldName, raw)
-		}
-
-		if frequency < min || frequency > max {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] (min: %d max: %d)", fieldName, raw, min, max)
-		}
-
-		// Assume frequency == 1 is allowed, return all
-		if frequency == 1 {
-			return fill(min, max), nil
-		}
-
-		// Frequency only occurs once in the set
-		if frequency > max/2 {
-			return []int{frequency}, nil
-		}
-
-		res := []int{min}
-		counter := min
-		for {
-			counter += frequency
-			if counter > max {
-				break
-			}
-			res = append(res, counter)
-		}
-
-		return res, nil
-	}
-
-	// RANGE (x-y)
-	if sp := strings.Split(rawReplaced, "-"); len(sp) == 2 {
-		first, err := strconv.Atoi(sp[0])
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] invalid first number", fieldName, rawReplaced)
-		}
-
-		second, err := strconv.Atoi(sp[1])
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] invalid second number", fieldName, rawReplaced)
-		}
-
-		// Assume this is invalid
-		if first >= second {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] invalid range", fieldName, rawReplaced)
-		}
-
-		if first < min || second > max {
-			return nil, fmt.Errorf("failed to parse cron %s [%s] (min: %d max: %d)", fieldName, rawReplaced, min, max)
-		}
-
-		return fill(first, second), nil
-	}
-
-	// LIST (x,y,z)
-	if sp := strings.Split(rawReplaced, ","); len(sp) > 1 {
-		deduplicator := make(map[int]bool)
-
-		for _, item := range sp {
-			num, err := strconv.Atoi(item)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse cron %s [%s] invalid number", fieldName, rawReplaced)
-			}
-
-			if num < min || num > max {
-				return nil, fmt.Errorf("failed to parse cron %s [%s] (min: %d max: %d)", fieldName, rawReplaced, min, max)
-			}
-
-			deduplicator[num] = true
-		}
-
-		res := make([]int, len(deduplicator))
-		count := 0
-		for k := range deduplicator {
-			res[count] = k
-			count++
-		}
-
-		sort.Ints(res)
-
-		return res, nil
-	}
-
-	return nil, fmt.Errorf("failed to parse cron %s [%s] unexpected format", fieldName, raw)
 }

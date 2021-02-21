@@ -251,7 +251,7 @@ command       /usr/bin/find
 `
 
 		if test.Nil(err) {
-			actual := cx.String()
+			actual := cx.Expand()
 			test.EqualValues(expected, actual)
 		}
 	}

@@ -21,5 +21,6 @@ func main() {
 		os.Exit(-1)
 	}
 
-	fmt.Println(cx)
+	// Print expanded summary
+	fmt.Println(cx.Expand())
 }
